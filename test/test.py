@@ -1,6 +1,12 @@
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, Timer
+from cocotb.triggers import RisingEdge
+
+def safe_read(signal):
+    try:
+        return signal.value.to_unsigned() & 7
+    except ValueError:
+        return None  # still X/unknown
 
 @cocotb.test()
 async def test_project(dut):
@@ -14,14 +20,20 @@ async def test_project(dut):
     dut.uio_in.value = 0
     dut.rst_n.value = 0
     dut.ena.value = 1
-    for _ in range(20):
+    for _ in range(100):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
-    for _ in range(20):
+
+    # Wait for outputs to settle out of X state
+    for _ in range(200):
         await RisingEdge(dut.clk)
+        result = safe_read(dut.uo_out)
+        if result is not None:
+            break
 
     # Test 1: after reset dice result should be 1
-    result = dut.uo_out.value.integer & 7
+    result = safe_read(dut.uo_out)
+    assert result is not None, "FAIL Test 1: Output still X after reset"
     assert result == 1, "FAIL Test 1: Expected 1 after reset, got " + str(result)
     cocotb.log.info("PASS Test 1: Reset gives dice_val = " + str(result))
 
@@ -33,7 +45,8 @@ async def test_project(dut):
     for _ in range(66000):
         await RisingEdge(dut.clk)
 
-    result = dut.uo_out.value.integer & 7
+    result = safe_read(dut.uo_out)
+    assert result is not None, "FAIL Test 2: Output is X after roll"
     assert 1 <= result <= 6, "FAIL Test 2: dice_val out of range, got " + str(result)
     cocotb.log.info("PASS Test 2: After roll, dice_val = " + str(result))
 
@@ -41,7 +54,7 @@ async def test_project(dut):
     stable = result
     for _ in range(100):
         await RisingEdge(dut.clk)
-    result = dut.uo_out.value.integer & 7
+    result = safe_read(dut.uo_out)
     assert result == stable, "FAIL Test 3: Result changed! Was " + str(stable) + " now " + str(result)
     cocotb.log.info("PASS Test 3: Result stable " + str(result))
 
